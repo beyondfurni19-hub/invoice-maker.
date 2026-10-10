@@ -1,11 +1,17 @@
 {
   "expo": {
     "name": "Invoice Maker",
-    "slug": "invoice-maker",
+    "slug": "beyondfurni",
+    "owner": "beyondfurnis-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "android": {
       "package": "com.prashant.invoicemaker"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7d47f65a-2e8f-49f3-b3b5-905e29a2599f"
+      }
     }
   }
 }

@@ -1,12 +1,19 @@
 {
   "expo": {
-    "name": "Invoice Maker",
+    "name": "Durgesh Tools",
     "slug": "beyondfurni",
     "owner": "beyondfurnis-team",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
+    "icon": "./icon.png",
+    "userInterfaceStyle": "light",
     "android": {
-      "package": "com.prashant.invoicemaker"
+      "package": "com.prashant.invoicemaker",
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      }
     },
     "extra": {
       "eas": {

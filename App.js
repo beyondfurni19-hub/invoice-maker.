@@ -167,6 +167,9 @@ const gstByRate = (items, interstate) => {
 };
 
 const calcQuote = (rows) => r2(rows.reduce((a, r) => a + num(r.amount), 0));
+const calcSec = (sec) => r2(((sec && sec.rows) || []).reduce((a, r) => a + num(r.amount), 0));
+const calcBreak = (secs) => r2(secs.reduce((a, x) => a + calcSec(x), 0));
+const calcDetail = (rows) => r2(rows.reduce((a, r) => a + num(r.qty), 0));
 
 const safePart = (s) => String(s || '')
   .replace(/[\/\\]+/g, '-')
@@ -174,7 +177,7 @@ const safePart = (s) => String(s || '')
   .replace(/^_+|_+$/g, '');
 const pdfName = (doc) => {
   const c = JSON.parse(doc.customer || '{}');
-  return safePart(c.name || doc.customer_name) + '_' + safePart(doc.number) + '.pdf';
+  return safePart(c.name || doc.customer_name).slice(0, 40) + '_' + safePart(doc.number) + '.pdf';
 };
 
 const invoiceHtml = (doc, S) => {
@@ -256,6 +259,61 @@ const quotationHtml = (doc) => {
     '<tr><td></td><td></td><td class="c" style="font-size:24px;font-weight:bold">Total</td>' +
     '<td class="c" style="font-size:20px;font-weight:bold">' + fmtQ(total) + '</td><td></td></tr>' +
     '</table></body></html>';
+};
+const detailHtml = (doc, S) => {
+  const c = JSON.parse(doc.customer || '{}');
+  const rowsData = JSON.parse(doc.items || '[]');
+  const oneLine = (t) => esc(String(t || '').split(/\r?\n/).map((x) => x.trim().replace(/[,\s]+$/, '')).filter(Boolean).join(', '));
+  const dd = (d) => esc(String(d || '').replace(/\//g, '-'));
+  const rows = rowsData.map((r, i) =>
+    '<tr><td class="c">' + (i + 1) + '</td>' +
+    '<td class="c">' + br(String(r.desc || '').toUpperCase()) + '</td>' +
+    '<td class="c">' + esc(fmtQ(num(r.qty))) + '</td>' +
+    '<td class="c">' + dd(r.date) + '</td><td></td></tr>').join('');
+  return '<html><head><meta charset="utf-8"/><style>' +
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#000;margin:0;padding:10mm;}' +
+    'table{border-collapse:collapse;width:100%;table-layout:fixed;}' +
+    'td,th{border:1px solid #000;padding:3px 5px;vertical-align:middle;word-wrap:break-word;}' +
+    '.c{text-align:center;} .b{font-weight:bold;} th{font-weight:normal;font-size:11px;padding:2px 4px;}' +
+    '</style></head><body><table>' +
+    '<colgroup><col style="width:8%"/><col style="width:50%"/><col style="width:12%"/><col style="width:17%"/><col style="width:13%"/></colgroup>' +
+    '<tr><td colspan="5" class="c b" style="font-size:15px;padding:4px 5px">' + esc(String(S.name || '').toUpperCase()) + '</td></tr>' +
+    '<tr><td colspan="5" class="c" style="font-size:10px">' + oneLine(S.address) + '</td></tr>' +
+    '<tr><td colspan="5" class="c b" style="font-size:11px">DISPATCH DETAILS</td></tr>' +
+    '<tr><td colspan="5" class="c b" style="font-size:15px;padding:4px 5px">' + esc(String(c.name || '').toUpperCase()) + '</td></tr>' +
+    '<tr><td colspan="5" class="c" style="font-size:10px">' + oneLine(c.address) + '</td></tr>' +
+    '<tr><th>Sr No</th><th>Description of Goods</th><th>Qty</th><th>Date</th><th></th></tr>' +
+    rows +
+    '</table></body></html>';
+};
+const breakupHtml = (doc) => {
+  const secs = JSON.parse(doc.items || '[]');
+  const cols = '<colgroup><col style="width:7%"/><col style="width:75%"/><col style="width:18%"/></colgroup>';
+  const tables = secs.map((sec) => {
+    const rows = (sec.rows || []).map((r, i) =>
+      '<tr><td class="c sm">' + (i + 1) + '</td>' +
+      '<td class="c" style="font-size:13px">' + br(String(r.desc || '').toUpperCase()) + '</td>' +
+      '<td class="c" style="font-size:13px">' + fmtQ(num(r.amount)) + '</td></tr>').join('');
+    return '<table class="sec">' + cols +
+      '<tr><td colspan="3" class="c" style="font-size:16px;font-weight:bold;padding:7px 6px">' + esc(String(sec.die || '').toUpperCase()) + '</td></tr>' +
+      '<tr><th>Sr no</th><th>Mould Name &amp; Maintaince</th><th>Amount</th></tr>' +
+      rows +
+      '<tr><td></td><td class="c" style="font-size:24px;font-weight:bold;padding:8px 6px">Total</td>' +
+      '<td class="c" style="font-size:20px;font-weight:bold">' + fmtQ(calcSec(sec)) + '</td></tr></table>';
+  }).join('<div style="height:14mm"></div>');
+  const grand = secs.length > 1
+    ? '<table class="g" style="margin-top:12mm">' + cols +
+      '<tr><td></td><td class="c" style="font-size:20px;font-weight:bold">GRAND TOTAL</td>' +
+      '<td class="c" style="font-size:20px;font-weight:bold">' + fmtQ(calcBreak(secs)) + '</td></tr></table>'
+    : '';
+  return '<html><head><meta charset="utf-8"/><style>' +
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#000;margin:0;padding:10mm;}' +
+    'table{border-collapse:collapse;width:100%;table-layout:fixed;}' +
+    'table.sec{page-break-inside:avoid;}' +
+    'table.sec td,table.sec th{border:1px solid #000;padding:5px 6px;vertical-align:middle;word-wrap:break-word;}' +
+    'table.g td{border:none;padding:4px 6px;}' +
+    '.c{text-align:center;} .sm{font-size:10px;} th{font-weight:normal;font-size:10px;padding:2px 4px;}' +
+    '</style></head><body>' + tables + grand + '</body></html>';
 };
 // ======================= HELPERS END =======================
 
@@ -341,7 +399,7 @@ const saveItemRow = (kind, it) => {
     [kind, descr, String(it.hsn || ''), String(it.gst === undefined ? '' : it.gst), String(it.per || ''), rate]);
   return 'added';
 };
-const itemDetail = (it) => (it.kind === 'invoice'
+const itemDetail = (it) => (it.kind === 'detail' ? 'Dispatch detail item' : it.kind === 'invoice'
   ? 'HSN ' + (it.hsn || '-') + ' • GST ' + (it.gst === '' || it.gst == null ? '-' : it.gst + '%') + ' • ₹' + fmt(num(it.rate)) + ' / ' + (it.per || 'no')
   : (num(it.rate) ? '₹' + inrQ(num(it.rate)) : 'Amount: har baar daalna'));
 
@@ -351,7 +409,7 @@ const getDocs = (type) => db.getAllSync('SELECT * FROM documents WHERE type = ?'
 
 // ----------------------- Numbering -----------------------
 // Invoice numbers: 20/DT/26-27 (har financial year mein 1 se shuru)
-const counterKey = (type, fy) => (type === 'invoice' ? 'ctr_inv_' + fy : 'ctr_quote');
+const counterKey = (type, fy) => (type === 'invoice' ? 'ctr_inv_' + fy : type === 'detail' ? 'ctr_detail' : type === 'breakup' ? 'ctr_breakup' : 'ctr_quote');
 const numOf = (type, number) => (type === 'invoice'
   ? parseInt(number, 10)
   : parseInt(String(number).replace(/\D/g, ''), 10));
@@ -362,6 +420,16 @@ const nextNumber = (type, dmy, S) => {
     const stored = getSetting(counterKey('invoice', fy));
     const n = stored ? parseInt(stored, 10) : (fy === '26-27' ? 20 : 1);
     return n + '/' + S.series + '/' + fy;
+  }
+  if (type === 'breakup') {
+    const sb = getSetting('ctr_breakup');
+    const bn = sb ? parseInt(sb, 10) : 1;
+    return 'BR-' + String(bn).padStart(3, '0');
+  }
+  if (type === 'detail') {
+    const st = getSetting('ctr_detail');
+    const dn = st ? parseInt(st, 10) : 1;
+    return 'DD-' + String(dn).padStart(3, '0');
   }
   const stored = getSetting('ctr_quote');
   const n = stored ? parseInt(stored, 10) : 1;
@@ -411,7 +479,7 @@ const missingNumbers = (fy) => {
 const makeAndSharePdf = async (doc) => {
   try {
     const S = getSettings();
-    const html = doc.type === 'invoice' ? invoiceHtml(doc, S) : quotationHtml(doc);
+    const html = doc.type === 'invoice' ? invoiceHtml(doc, S) : doc.type === 'detail' ? detailHtml(doc, S) : doc.type === 'breakup' ? breakupHtml(doc) : quotationHtml(doc);
     const { uri } = await Print.printToFileAsync({ html, width: 595, height: 842 });
     const name = pdfName(doc);
     const dest = FileSystem.cacheDirectory + name;
@@ -527,6 +595,27 @@ function Icon({ name, size = 22, color = '#fff' }) {
       </View>
     );
   }
+  if (name === 'list') {
+    return (
+      <View style={[box, { justifyContent: 'space-between', paddingVertical: size * 0.12 }]}>
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', width: size * 0.86 }}>
+            <View style={{ width: size * 0.16, height: size * 0.16, borderRadius: size * 0.08, backgroundColor: color }} />
+            <View style={{ flex: 1, height: lw, backgroundColor: color, borderRadius: 1, marginLeft: size * 0.1 }} />
+          </View>
+        ))}
+      </View>
+    );
+  }
+  if (name === 'split') {
+    return (
+      <View style={box}>
+        <View style={{ width: size * 0.82, height: size * 0.82, borderRadius: size * 0.41, borderWidth: lw, borderColor: color, overflow: 'hidden', flexDirection: 'row' }}>
+          <View style={{ width: '50%', height: '100%', backgroundColor: color }} />
+        </View>
+      </View>
+    );
+  }
   if (name === 'plus') {
     return (
       <View style={box}>
@@ -573,6 +662,25 @@ function Empty({ icon, title, text }) {
   );
 }
 
+const kindStyle = (k) => (k === 'invoice'
+  ? { bg: '#FFEDD5', fg: ORANGE_D, text: '#C2410C', label: 'Invoice' }
+  : k === 'detail'
+    ? { bg: '#DCFCE7', fg: '#15803D', text: '#15803D', label: 'Detail' }
+    : k === 'breakup'
+      ? { bg: '#F3E8FF', fg: '#7E22CE', text: '#7E22CE', label: 'Breakup' }
+      : { bg: '#DBEAFE', fg: BLUE, text: '#1D4ED8', label: 'Quotation' });
+
+function QtyTotal({ total }) {
+  return (
+    <View style={s.totalBox}>
+      <View style={[s.grandRow, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+        <Text style={s.grandLbl}>Total qty</Text>
+        <Text style={s.grand}>{inrQ(total)}</Text>
+      </View>
+    </View>
+  );
+}
+
 function Totals({ isInv, t, total }) {
   return (
     <View style={s.totalBox}>
@@ -603,10 +711,13 @@ function Main() {
   const [tick, setTick] = useState(0);
   const refresh = () => setTick((t) => t + 1);
   const goHome = () => { refresh(); setScreen({ name: 'home' }); };
+  const toList = (name) => { refresh(); setScreen({ name }); };
   const goBack = () => {
     if (screen.name === 'docForm' && (screen.doc || screen.copyFrom || screen.fromQuote)) {
       setScreen({ name: 'docView', docId: (screen.doc || screen.copyFrom || screen.fromQuote).id });
-    } else goHome();
+    } else if (screen.name === 'custForm') toList('customers');
+    else if (screen.name === 'itemForm') toList('items');
+    else goHome();
   };
 
   useEffect(() => {
@@ -619,14 +730,14 @@ function Main() {
   }, [screen]);
 
   const dt = screen.type || (screen.doc && screen.doc.type) || (screen.copyFrom && screen.copyFrom.type);
-  const kindLbl = dt === 'quotation' ? 'quotation' : 'invoice';
+  const kindLbl = dt === 'quotation' ? 'quotation' : dt === 'detail' ? 'dispatch detail' : dt === 'breakup' ? 'breakup' : 'invoice';
   const brand = String(getSettings().name || 'My Business').toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase());
   const titles = {
-    home: brand, settings: 'Settings', reports: 'Reports',
+    home: brand, settings: 'Settings', reports: 'Reports', customers: 'Customers', items: 'Saved items',
     custForm: screen.customer ? 'Edit customer' : 'New customer',
     itemForm: screen.item ? 'Edit saved item' : 'New saved item',
     docForm: (screen.doc ? 'Edit ' : 'New ') + kindLbl,
-    docView: 'Details',
+    docView: 'Document',
   };
 
   return (
@@ -641,16 +752,22 @@ function Main() {
           <Image source={require('./icon.png')} style={s.logo} />
         )}
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={s.title} numberOfLines={1}>{titles[screen.name]}</Text>
+          <Text style={[s.title, screen.name === 'home' && { fontSize: 18 }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{titles[screen.name]}</Text>
           {screen.name === 'home' ? <Text style={s.subtitle}>Invoices & quotations</Text> : null}
         </View>
         {screen.name === 'home' ? (
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TouchableOpacity style={s.iconBtn} onPress={() => setScreen({ name: 'reports' })}>
-              <Icon name="chart" size={20} color="#fff" />
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <TouchableOpacity style={[s.iconBtn, s.iconBtnSm]} onPress={() => setScreen({ name: 'customers' })}>
+              <Icon name="people" size={19} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={s.iconBtn} onPress={() => setScreen({ name: 'settings' })}>
-              <Icon name="sliders" size={20} color="#fff" />
+            <TouchableOpacity style={[s.iconBtn, s.iconBtnSm]} onPress={() => setScreen({ name: 'items' })}>
+              <Icon name="box" size={19} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.iconBtn, s.iconBtnSm]} onPress={() => setScreen({ name: 'reports' })}>
+              <Icon name="chart" size={19} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.iconBtn, s.iconBtnSm]} onPress={() => setScreen({ name: 'settings' })}>
+              <Icon name="sliders" size={19} color="#fff" />
             </TouchableOpacity>
           </View>
         ) : null}
@@ -661,143 +778,138 @@ function Main() {
       )}
       {screen.name === 'settings' && <SettingsScreen onDone={goHome} />}
       {screen.name === 'reports' && <ReportsScreen />}
-      {screen.name === 'itemForm' && <ItemScreen item={screen.item} onDone={goHome} />}
-      {screen.name === 'custForm' && <CustomerScreen customer={screen.customer} onDone={goHome} />}
-      {screen.name === 'docForm' && (
+      {screen.name === 'customers' && <ManageList kind="customer" tick={tick} setScreen={setScreen} />}
+      {screen.name === 'items' && <ManageList kind="item" tick={tick} setScreen={setScreen} />}
+      {screen.name === 'itemForm' && <ItemScreen item={screen.item} onDone={() => toList('items')} />}
+      {screen.name === 'custForm' && <CustomerScreen customer={screen.customer} onDone={() => toList('customers')} />}
+      {screen.name === 'docForm' && (screen.type === 'breakup' ? (
+        <BreakupForm doc={screen.doc} copyFrom={screen.copyFrom}
+          onSaved={(id) => { refresh(); setScreen({ name: 'docView', docId: id }); }} />
+      ) : (
         <DocForm type={screen.type} doc={screen.doc} copyFrom={screen.copyFrom} fromQuote={screen.fromQuote}
           onSaved={(id) => { refresh(); setScreen({ name: 'docView', docId: id }); }} />
-      )}
+      ))}
       {screen.name === 'docView' && <DocView docId={screen.docId} setScreen={setScreen} onDeleted={goHome} />}
     </View>
   );
 }
 
 function Home({ tab, setTab, tick, setScreen }) {
+  const isDoc = tab === 'invoice' || tab === 'quotation';
+  const isList = isDoc || tab === 'detail' || tab === 'breakup';
   const [search, setSearch] = useState('');
   const [flt, setFlt] = useState('all');
   const [list, setList] = useState([]);
   useEffect(() => {
-    setList(tab === 'customer' ? getCustomers() : tab === 'item' ? getSavedItems() : getDocs(tab));
+    setList(isList ? getDocs(tab) : []);
   }, [tab, tick]);
 
-  const isDoc = tab === 'invoice' || tab === 'quotation';
   const q = search.toLowerCase();
   const filtered = list.filter((i) => {
-    if (tab === 'item') return (i.descr || '').toLowerCase().includes(q);
-    if (!isDoc) return (i.name || '').toLowerCase().includes(q);
-    if (flt === 'paid' && !i.paid) return false;
-    if (flt === 'unpaid' && i.paid) return false;
+    if (isDoc && flt === 'paid' && !i.paid) return false;
+    if (isDoc && flt === 'unpaid' && i.paid) return false;
     return (i.customer_name || '').toLowerCase().includes(q) || (i.number || '').toLowerCase().includes(q);
   });
   const unpaid = isDoc ? list.filter((i) => !i.paid) : [];
   const pendingAmt = unpaid.reduce((a, i) => a + num(i.total), 0);
 
-  const addNew = () => {
-    if (tab === 'customer') setScreen({ name: 'custForm' });
-    else if (tab === 'item') setScreen({ name: 'itemForm' });
-    else setScreen({ name: 'docForm', type: tab });
-  };
-  const tabs = [['invoice', 'Invoices', 'invoice'], ['quotation', 'Quotations', 'quote'], ['customer', 'Customers', 'people'], ['item', 'Items', 'box']];
+  const tabs = [['invoice', 'Invoices', 'invoice'], ['quotation', 'Quotations', 'quote'], ['detail', 'Detail', 'list'], ['breakup', 'Breakup', 'split']];
   const flts = [['all', 'All'], ['unpaid', 'Unpaid'], ['paid', 'Paid']];
   const nowP = parseDMY(todayDMY());
-  const monthTotal = isDoc
-    ? list.filter((i) => { const pp = parseDMY(i.date); return pp && pp.m === nowP.m && pp.y === nowP.y; }).reduce((a, i) => a + num(i.total), 0)
-    : 0;
+  const thisMonth = list.filter((i) => { const pp = parseDMY(i.date); return pp && pp.m === nowP.m && pp.y === nowP.y; });
+  const monthTotal = thisMonth.reduce((a, i) => a + num(i.total), 0);
+  const totalQtyAll = list.reduce((a, i) => a + num(i.total), 0);
   const money = (v) => '₹' + (tab === 'invoice' ? inr(v) : inrQ(v));
   const searching = !!search || flt !== 'all';
   const emptyMap = {
     invoice: ['invoice', 'Abhi koi invoice nahi hai', 'Neeche + dabakar pehla invoice banao.'],
     quotation: ['quote', 'Abhi koi quotation nahi hai', 'Neeche + dabakar pehli quotation banao.'],
-    customer: ['people', 'Abhi koi customer nahi hai', 'Neeche + dabakar pehla customer add karo.'],
-    item: ['box', 'Abhi koi saved item nahi hai', 'Baar-baar use hone wale items yahan save karo, phir invoice mein tap karke daalo.'],
+    detail: ['list', 'Abhi koi dispatch detail nahi hai', 'Neeche + dabakar pehli dispatch detail banao.'],
+    breakup: ['split', 'Abhi koi breakup nahi hai', 'Neeche + dabakar pehla breakup banao.'],
   };
   const em = searching ? ['search', 'Kuch nahi mila', 'Search ya filter badal kar dekho.'] : emptyMap[tab];
+  const countItems = (d) => { try { return JSON.parse(d.items || '[]').length; } catch (e) { return 0; } };
 
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        <View style={s.hero}>
-          {isDoc ? (
-            <View>
-              <Text style={s.heroLabel}>Pending payment</Text>
-              <Text style={s.heroAmt} numberOfLines={1} adjustsFontSizeToFit>{money(pendingAmt)}</Text>
-              <View style={s.heroRow}>
-                <View style={s.heroPill}><Text style={s.heroPillText}>{unpaid.length ? unpaid.length + ' unpaid' : 'Sab paid'}</Text></View>
-                <View style={s.heroPill}><Text style={s.heroPillText}>{money(monthTotal)} is mahine</Text></View>
-              </View>
-            </View>
-          ) : (
-            <View>
-              <Text style={s.heroLabel}>{tab === 'customer' ? 'Saved customers' : 'Saved items'}</Text>
-              <Text style={s.heroAmt}>{list.length}</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={s.searchWrap}>
-          <Icon name="search" size={18} color="#94A3B8" />
-          <TextInput style={s.searchInput} placeholder={tab === 'customer' ? 'Search customers' : tab === 'item' ? 'Search items' : 'Search name or number'}
-            placeholderTextColor="#94A3B8" value={search} onChangeText={setSearch} />
-        </View>
-
-        {isDoc && (
-          <View style={s.seg}>
-            {flts.map(([k, label]) => (
-              <TouchableOpacity key={k} style={[s.segItem, flt === k && s.segOn]} onPress={() => setFlt(k)}>
-                <Text style={[s.segText, flt === k && s.segTextOn]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        <FlatList
-          data={filtered}
-          keyExtractor={(i) => String(i.id)}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingTop: 4, paddingBottom: 110 }}
-          ListEmptyComponent={<Empty icon={em[0]} title={em[1]} text={em[2]} />}
-          renderItem={({ item }) => tab === 'item' ? (
-            <TouchableOpacity activeOpacity={0.7} style={s.card} onPress={() => setScreen({ name: 'itemForm', item })}>
-              <View style={[s.itemIcon, { backgroundColor: item.kind === 'invoice' ? '#FFEDD5' : '#DBEAFE' }]}>
-                <Icon name="box" size={20} color={item.kind === 'invoice' ? ORANGE_D : BLUE} />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12, marginRight: 8 }}>
-                <Text style={s.cardTitle} numberOfLines={2}>{item.descr}</Text>
-                <Text style={s.muted} numberOfLines={1}>{itemDetail(item)}</Text>
-              </View>
-              <View style={[s.pill, { backgroundColor: item.kind === 'invoice' ? '#FFEDD5' : '#DBEAFE' }]}>
-                <Text style={[s.pillText, { color: item.kind === 'invoice' ? '#C2410C' : '#1D4ED8' }]}>{item.kind === 'invoice' ? 'Invoice' : 'Quotation'}</Text>
-              </View>
-            </TouchableOpacity>
-          ) : tab === 'customer' ? (
-            <TouchableOpacity activeOpacity={0.7} style={s.card} onPress={() => setScreen({ name: 'custForm', customer: item })}>
-              <Avatar name={item.name} />
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={s.cardTitle} numberOfLines={1}>{item.name}</Text>
-                <Text style={s.muted} numberOfLines={1}>{item.gstin ? 'GSTIN ' + item.gstin : item.phone || item.address}</Text>
-              </View>
-              <Icon name="chevR" size={16} color="#CBD5E1" />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity activeOpacity={0.7} style={s.card} onPress={() => setScreen({ name: 'docView', docId: item.id })}>
-              <Avatar name={item.customer_name} />
-              <View style={{ flex: 1, marginLeft: 12, marginRight: 8 }}>
-                <Text style={s.cardTitle} numberOfLines={1}>{item.customer_name}</Text>
-                <Text style={s.muted} numberOfLines={1}>{item.number}</Text>
-                <Text style={s.mutedSm}>{item.date}</Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={s.amt}>₹{item.type === 'invoice' ? inr(item.total) : inrQ(item.total)}</Text>
-                <View style={[s.pill, { backgroundColor: item.paid ? '#DCFCE7' : '#FEE2E2', marginTop: 6 }]}>
-                  <Text style={[s.pillText, { color: item.paid ? '#15803D' : '#B91C1C' }]}>{item.paid ? 'Paid' : 'Unpaid'}</Text>
+        {isList ? (
+          <View style={{ flex: 1 }}>
+            <View style={s.hero}>
+              {isDoc ? (
+                <View>
+                  <Text style={s.heroLabel}>Pending payment</Text>
+                  <Text style={s.heroAmt} numberOfLines={1} adjustsFontSizeToFit>{money(pendingAmt)}</Text>
+                  <View style={s.heroRow}>
+                    <View style={s.heroPill}><Text style={s.heroPillText}>{unpaid.length ? unpaid.length + ' unpaid' : 'Sab paid'}</Text></View>
+                    <View style={s.heroPill}><Text style={s.heroPillText}>{money(monthTotal)} is mahine</Text></View>
+                  </View>
                 </View>
+              ) : (
+                <View>
+                  <Text style={s.heroLabel}>{tab === 'breakup' ? 'Breakup sheets' : 'Dispatch details'}</Text>
+                  <Text style={s.heroAmt}>{list.length}</Text>
+                  <View style={s.heroRow}>
+                    <View style={s.heroPill}><Text style={s.heroPillText}>{thisMonth.length} is mahine</Text></View>
+                    <View style={s.heroPill}><Text style={s.heroPillText}>{tab === 'breakup' ? '₹' + inrQ(totalQtyAll) + ' total' : inrQ(totalQtyAll) + ' total qty'}</Text></View>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            <View style={s.searchWrap}>
+              <Icon name="search" size={18} color="#94A3B8" />
+              <TextInput style={s.searchInput} placeholder="Search name or number"
+                placeholderTextColor="#94A3B8" value={search} onChangeText={setSearch} />
+            </View>
+
+            {isDoc && (
+              <View style={s.seg}>
+                {flts.map(([k, label]) => (
+                  <TouchableOpacity key={k} style={[s.segItem, flt === k && s.segOn]} onPress={() => setFlt(k)}>
+                    <Text style={[s.segText, flt === k && s.segTextOn]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
+            )}
+
+            <FlatList
+              data={filtered}
+              keyExtractor={(i) => String(i.id)}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingTop: isDoc ? 4 : 12, paddingBottom: 110 }}
+              ListEmptyComponent={<Empty icon={em[0]} title={em[1]} text={em[2]} />}
+              renderItem={({ item }) => (
+                <TouchableOpacity activeOpacity={0.7} style={s.card} onPress={() => setScreen({ name: 'docView', docId: item.id })}>
+                  <Avatar name={item.customer_name} />
+                  <View style={{ flex: 1, marginLeft: 12, marginRight: 8 }}>
+                    <Text style={s.cardTitle} numberOfLines={1}>{item.customer_name}</Text>
+                    <Text style={s.muted} numberOfLines={1}>{item.number}</Text>
+                    <Text style={s.mutedSm}>{item.date}</Text>
+                  </View>
+                  {isDoc ? (
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={s.amt}>₹{item.type === 'invoice' ? inr(item.total) : inrQ(item.total)}</Text>
+                      <View style={[s.pill, { backgroundColor: item.paid ? '#DCFCE7' : '#FEE2E2', marginTop: 6 }]}>
+                        <Text style={[s.pillText, { color: item.paid ? '#15803D' : '#B91C1C' }]}>{item.paid ? 'Paid' : 'Unpaid'}</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={s.amt}>{tab === 'breakup' ? '₹' + inrQ(item.total) : inrQ(item.total) + ' qty'}</Text>
+                      <View style={[s.pill, { backgroundColor: '#E2E8F0', marginTop: 6 }]}>
+                        <Text style={[s.pillText, { color: '#475569' }]}>{countItems(item)} {tab === 'breakup' ? 'dies' : 'items'}</Text>
+                      </View>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity style={s.fab} onPress={() => setScreen({ name: 'docForm', type: tab })} activeOpacity={0.85}>
+              <Icon name="plus" size={28} color="#fff" />
             </TouchableOpacity>
-          )}
-        />
-        <TouchableOpacity style={s.fab} onPress={addNew} activeOpacity={0.85}>
-          <Icon name="plus" size={28} color="#fff" />
-        </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
 
       <View style={s.nav}>
@@ -812,6 +924,70 @@ function Home({ tab, setTab, tick, setScreen }) {
           );
         })}
       </View>
+    </View>
+  );
+}
+
+// Customers aur Saved items ki list (ab header ke icons se khulti hai)
+function ManageList({ kind, tick, setScreen }) {
+  const isCust = kind === 'customer';
+  const [search, setSearch] = useState('');
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    setList(isCust ? getCustomers() : getSavedItems());
+  }, [kind, tick]);
+  const q = search.toLowerCase();
+  const filtered = list.filter((i) => ((isCust ? i.name : i.descr) || '').toLowerCase().includes(q));
+  const em = search
+    ? ['search', 'Kuch nahi mila', 'Search badal kar dekho.']
+    : isCust
+      ? ['people', 'Abhi koi customer nahi hai', 'Neeche + dabakar pehla customer add karo.']
+      : ['box', 'Abhi koi saved item nahi hai', 'Baar-baar use hone wale items yahan save karo, phir invoice mein tap karke daalo.'];
+
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={s.hero}>
+        <Text style={s.heroLabel}>{isCust ? 'Saved customers' : 'Saved items'}</Text>
+        <Text style={s.heroAmt}>{list.length}</Text>
+      </View>
+      <View style={s.searchWrap}>
+        <Icon name="search" size={18} color="#94A3B8" />
+        <TextInput style={s.searchInput} placeholder={isCust ? 'Search customers' : 'Search items'}
+          placeholderTextColor="#94A3B8" value={search} onChangeText={setSearch} />
+      </View>
+      <FlatList
+        data={filtered}
+        keyExtractor={(i) => String(i.id)}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingTop: 8, paddingBottom: 110 }}
+        ListEmptyComponent={<Empty icon={em[0]} title={em[1]} text={em[2]} />}
+        renderItem={({ item }) => (isCust ? (
+          <TouchableOpacity activeOpacity={0.7} style={s.card} onPress={() => setScreen({ name: 'custForm', customer: item })}>
+            <Avatar name={item.name} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={s.cardTitle} numberOfLines={1}>{item.name}</Text>
+              <Text style={s.muted} numberOfLines={1}>{item.gstin ? 'GSTIN ' + item.gstin : item.phone || item.address}</Text>
+            </View>
+            <Icon name="chevR" size={16} color="#CBD5E1" />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity activeOpacity={0.7} style={s.card} onPress={() => setScreen({ name: 'itemForm', item })}>
+            <View style={[s.itemIcon, { backgroundColor: kindStyle(item.kind).bg }]}>
+              <Icon name="box" size={20} color={kindStyle(item.kind).fg} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12, marginRight: 8 }}>
+              <Text style={s.cardTitle} numberOfLines={2}>{item.descr}</Text>
+              <Text style={s.muted} numberOfLines={1}>{itemDetail(item)}</Text>
+            </View>
+            <View style={[s.pill, { backgroundColor: kindStyle(item.kind).bg }]}>
+              <Text style={[s.pillText, { color: kindStyle(item.kind).text }]}>{kindStyle(item.kind).label}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      />
+      <TouchableOpacity style={s.fab} onPress={() => setScreen({ name: isCust ? 'custForm' : 'itemForm' })} activeOpacity={0.85}>
+        <Icon name="plus" size={28} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -1060,7 +1236,7 @@ function ItemScreen({ item, onDone }) {
         <View>
           <Text style={s.label}>Kis ke liye?</Text>
           <View style={s.chipRow}>
-            {[['invoice', 'Invoice item'], ['quotation', 'Quotation item']].map(([k, label]) => (
+            {[['invoice', 'Invoice item'], ['quotation', 'Quotation item'], ['detail', 'Detail item'], ['breakup', 'Breakup item']].map(([k, label]) => (
               <TouchableOpacity key={k} style={[s.chip, f.kind === k && s.chipOn]} onPress={() => set('kind')(k)}>
                 <Text style={[s.chipText, f.kind === k && s.chipTextOn]}>{label}</Text>
               </TouchableOpacity>
@@ -1077,6 +1253,8 @@ function ItemScreen({ item, onDone }) {
           <Field label="per (no, kg, hr...)" value={f.per} onChangeText={set('per')} />
           <Field label="Rate ₹" value={String(f.rate)} onChangeText={set('rate')} keyboardType="decimal-pad" />
         </View>
+      ) : f.kind === 'detail' ? (
+        <Text style={s.muted}>Sirf description save hoti hai. Qty aur date har baar daalni hogi.</Text>
       ) : (
         <Field label="Amount ₹ (optional)" value={String(f.rate)} onChangeText={set('rate')} keyboardType="decimal-pad" />
       )}
@@ -1119,6 +1297,7 @@ function SavedItemPicker({ visible, kind, onClose, onPick }) {
 
 function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
   const isInv = type === 'invoice';
+  const isDet = type === 'detail';
   const S = getSettings();
   const src = doc || copyFrom || fromQuote;
   const ex = src ? JSON.parse(src.extra || '{}') : {};
@@ -1143,7 +1322,9 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
   const [destination, setDestination] = useState(ex.destination || '');
   const blankItem = isInv
     ? { desc: '', hsn: S.defaultHsn || '9988', gst: '18', qty: '1', rate: '', per: 'no' }
-    : { date: todayDMY(), desc: '', amount: '' };
+    : isDet
+      ? { date: todayDMY(), desc: '', qty: '' }
+      : { date: todayDMY(), desc: '', amount: '' };
   const [items, setItems] = useState(() => {
     if (!src) return [blankItem];
     const arr = JSON.parse(src.items || '[]');
@@ -1166,7 +1347,7 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
   const applySaved = (idx, sv) => {
     const fill = (it) => (isInv
       ? { ...it, desc: sv.descr, hsn: sv.hsn || it.hsn, gst: (sv.gst !== null && sv.gst !== undefined && sv.gst !== '') ? sv.gst : it.gst, per: sv.per || it.per, rate: sv.rate || '' }
-      : { ...it, desc: sv.descr, amount: sv.rate || '' });
+      : isDet ? { ...it, desc: sv.descr } : { ...it, desc: sv.descr, amount: sv.rate || '' });
     setItems((prev) => {
       if (idx >= 0) return prev.map((it, n) => (n === idx ? fill(it) : it));
       const empty = prev.findIndex((it) => !String(it.desc || '').trim());
@@ -1183,7 +1364,7 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
   };
   const inter = isInv && customer ? isInterstate(customer, S.gstin) : false;
   const t = isInv ? calcInvoice(items, inter) : null;
-  const total = isInv ? t.total : calcQuote(items);
+  const total = isInv ? t.total : isDet ? calcDetail(items) : calcQuote(items);
 
   const save = () => {
     if (!customer) return Alert.alert('Pehle customer chuno');
@@ -1194,11 +1375,14 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
 
     const filled = items.filter((it) => String(it.desc || '').trim());
     if (!filled.length) return Alert.alert('Kam se kam ek item daalo (description ke saath)');
-    const orphan = items.find((it) => !String(it.desc || '').trim() && (num(it.rate) > 0 || num(it.amount) > 0));
+    const orphan = items.find((it) => !String(it.desc || '').trim() && (num(it.rate) > 0 || num(it.amount) > 0 || num(it.qty) > 0));
     if (orphan) return Alert.alert('Description daalo', 'Kisi item mein amount hai par description khali hai.');
     if (isInv) {
       const bad = filled.find((it) => num(it.qty) <= 0 || num(it.rate) <= 0);
       if (bad) return Alert.alert('Qty aur Rate daalo', 'Har item mein Qty aur Rate 0 se zyada hona chahiye.');
+    } else if (isDet) {
+      const bad = filled.find((it) => num(it.qty) <= 0);
+      if (bad) return Alert.alert('Qty daalo', 'Har item mein Qty 0 se zyada honi chahiye.');
     } else {
       const bad = filled.find((it) => num(it.amount) <= 0);
       if (bad) return Alert.alert('Amount daalo', 'Har item mein amount 0 se zyada hona chahiye.');
@@ -1210,7 +1394,7 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
       ? { orderNo, orderDate, despatch, destination, inter: isInter, fromQuote: fq }
       : (doc ? { invoiceId: ex.invoiceId, invoiceNo: ex.invoiceNo } : {}));
     const cust = JSON.stringify(customer);
-    const tot = isInv ? calcInvoice(filled, isInter).total : calcQuote(filled);
+    const tot = isInv ? calcInvoice(filled, isInter).total : isDet ? calcDetail(filled) : calcQuote(filled);
     let id;
     if (doc) {
       db.runSync('UPDATE documents SET number=?, date=?, customer_id=?, customer_name=?, customer=?, items=?, extra=?, total=? WHERE id=?',
@@ -1236,11 +1420,11 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
   return (
     <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 300 }} keyboardShouldPersistTaps="handled">
       <Text style={s.section}>
-        {isInv ? 'Tax Invoice' : 'Quotation'}{copyFrom ? ' (copy)' : ''}{fromQuote ? ' (Quotation ' + fromQuote.number + ' se)' : ''}
+        {isInv ? 'Tax Invoice' : isDet ? 'Dispatch Detail' : 'Quotation'}{copyFrom ? ' (copy)' : ''}{fromQuote ? ' (Quotation ' + fromQuote.number + ' se)' : ''}
       </Text>
       {fromQuote ? <Text style={s.muted}>Quotation ka amount "Rate" mein aaya hai aur GST 18% default hai. Check karke Save dabao.</Text> : null}
       <View style={s.panel}>
-      <Field label={isInv ? 'Invoice No.' : 'Quotation No.'} value={number} onChangeText={(v) => { setNumber(v); setNumTouched(true); }} />
+      <Field label={isInv ? 'Invoice No.' : isDet ? 'Detail No.' : 'Quotation No.'} value={number} onChangeText={(v) => { setNumber(v); setNumTouched(true); }} />
       {gaps.length > 0 && (
         <View style={{ marginTop: 6 }}>
           <Text style={s.muted}>Khali (delete hue) numbers, dabao to number set ho jayega:</Text>
@@ -1284,7 +1468,7 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
             <TouchableOpacity onPress={() => saveRowToList(i)}><Text style={[s.link, { marginTop: 0 }]}>List mein save karo</Text></TouchableOpacity>
           </View>
           {!isInv && <DateField value={it.date} onChange={(v) => upd(i, 'date', v)} />}
-          <Input style={[ { marginTop: !isInv ? 6 : 0, minHeight: 56 }]} multiline placeholder={isInv ? 'Description of Goods' : 'Description / kaam ki detail'}
+          <Input style={[ { marginTop: !isInv ? 6 : 0, minHeight: 56 }]} multiline placeholder={isInv || isDet ? 'Description of Goods' : 'Description / kaam ki detail'}
             value={it.desc} onChangeText={(v) => upd(i, 'desc', v)} />
           {isInv ? (
             <View>
@@ -1299,6 +1483,8 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
               </View>
               <Text style={[s.muted, { textAlign: 'right' }]}>Amount: ₹{inr(num(it.qty) * num(it.rate))}</Text>
             </View>
+          ) : isDet ? (
+            <Input style={[ { marginTop: 6 }]} placeholder="Qty" keyboardType="decimal-pad" value={String(it.qty)} onChangeText={(v) => upd(i, 'qty', v)} />
           ) : (
             <Input style={[ { marginTop: 6 }]} placeholder="Amount ₹" keyboardType="decimal-pad" value={String(it.amount)} onChangeText={(v) => upd(i, 'amount', v)} />
           )}
@@ -1318,11 +1504,150 @@ function DocForm({ type, doc, copyFrom, fromQuote, onSaved }) {
         </TouchableOpacity>
       </View>
 
-      <Totals isInv={isInv} t={t} total={total} />
+      {isDet ? <QtyTotal total={total} /> : <Totals isInv={isInv} t={t} total={total} />}
       <TouchableOpacity style={s.btn} onPress={save}><Text style={s.btnText}>{doc ? 'Update karo' : 'Save karo'}</Text></TouchableOpacity>
 
       <CustomerPicker visible={pick} onClose={() => setPick(false)} onPick={(c) => { setCustomer(c); setPick(false); }} />
       <SavedItemPicker visible={pickIdx !== null} kind={type} onClose={() => setPickIdx(null)} onPick={(sv) => applySaved(pickIdx, sv)} />
+    </ScrollView>
+  );
+}
+
+function BreakupForm({ doc, copyFrom, onSaved }) {
+  const S = getSettings();
+  const src = doc || copyFrom;
+  const blankRow = () => ({ desc: '', amount: '' });
+  const blankSec = () => ({ die: '', rows: [blankRow()] });
+  const [date, setDate] = useState(doc ? doc.date : todayDMY());
+  const [number, setNumber] = useState(doc ? doc.number : nextNumber('breakup', todayDMY(), S));
+  const [secs, setSecs] = useState(() => (src ? JSON.parse(src.items || '[]') : [blankSec()]));
+  const [pick, setPick] = useState(null);
+
+  const updSec = (si, patch) => setSecs((prev) => prev.map((x, n) => (n === si ? { ...x, ...patch } : x)));
+  const updRow = (si, ri, k, v) => setSecs((prev) => prev.map((x, n) => (n !== si ? x
+    : { ...x, rows: x.rows.map((r, m) => (m === ri ? { ...r, [k]: v } : r)) })));
+  const addRow = (si) => setSecs((prev) => prev.map((x, n) => (n === si ? { ...x, rows: [...x.rows, blankRow()] } : x)));
+  const delRow = (si, ri) => setSecs((prev) => prev.map((x, n) => (n !== si ? x : { ...x, rows: x.rows.filter((_, m) => m !== ri) })));
+  const delSec = (si) => setSecs((prev) => prev.filter((_, n) => n !== si));
+
+  const applySaved = (sv) => {
+    if (!pick) return;
+    const { si, ri } = pick;
+    const fill = (r) => ({ ...r, desc: sv.descr, amount: sv.rate || '' });
+    setSecs((prev) => prev.map((x, n) => {
+      if (n !== si) return x;
+      if (ri >= 0) return { ...x, rows: x.rows.map((r, m) => (m === ri ? fill(r) : r)) };
+      const empty = x.rows.findIndex((r) => !String(r.desc || '').trim());
+      if (empty >= 0) return { ...x, rows: x.rows.map((r, m) => (m === empty ? fill(r) : r)) };
+      return { ...x, rows: [...x.rows, fill(blankRow())] };
+    }));
+    setPick(null);
+  };
+  const saveRowToList = (si, ri) => {
+    const r = secs[si].rows[ri];
+    if (!String(r.desc || '').trim()) return Alert.alert('Pehle kaam ka naam daalo');
+    const res = saveItemRow('breakup', r);
+    Alert.alert(res === 'added' ? 'Saved list mein add ho gaya ✓' : 'Saved item update ho gaya ✓');
+  };
+
+  const grand = calcBreak(secs);
+
+  const save = () => {
+    const numTrim = number.trim();
+    if (!numTrim) return Alert.alert('Number daalo');
+    const dup = db.getFirstSync('SELECT id FROM documents WHERE type = ? AND number = ? AND id != ?', ['breakup', numTrim, doc ? doc.id : -1]);
+    if (dup) return Alert.alert('Ye number pehle se use ho chuka hai', 'Koi dusra number daalo.');
+    const clean = [];
+    for (let i = 0; i < secs.length; i++) {
+      const sec = secs[i];
+      const die = String(sec.die || '').trim();
+      const rows = sec.rows.filter((r) => String(r.desc || '').trim());
+      const orphan = sec.rows.find((r) => !String(r.desc || '').trim() && num(r.amount) > 0);
+      if (orphan) return Alert.alert('Kaam ka naam daalo', 'Die ' + (i + 1) + ' mein kisi row mein amount hai par naam khali hai.');
+      if (!die && !rows.length) continue;
+      if (!die) return Alert.alert('Die ka naam daalo', 'Die ' + (i + 1) + ' ka naam khali hai.');
+      if (!rows.length) return Alert.alert('Kaam daalo', die + ' mein kam se kam ek kaam daalo.');
+      const bad = rows.find((r) => num(r.amount) <= 0);
+      if (bad) return Alert.alert('Amount daalo', die + ' mein har kaam ka amount 0 se zyada hona chahiye.');
+      clean.push({ die, rows: rows.map((r) => ({ desc: String(r.desc).trim(), amount: r.amount })) });
+    }
+    if (!clean.length) return Alert.alert('Kam se kam ek die aur uska kaam daalo');
+    const names = clean.map((x) => x.die).join(', ');
+    const cust = JSON.stringify({ name: names });
+    const tot = calcBreak(clean);
+    let id;
+    if (doc) {
+      db.runSync('UPDATE documents SET number=?, date=?, customer_id=?, customer_name=?, customer=?, items=?, extra=?, total=? WHERE id=?',
+        [numTrim, date.trim(), null, names, cust, JSON.stringify(clean), '{}', tot, doc.id]);
+      id = doc.id;
+    } else {
+      const r = db.runSync('INSERT INTO documents (type, number, date, customer_id, customer_name, customer, items, extra, total, paid) VALUES (?,?,?,?,?,?,?,?,?,0)',
+        ['breakup', numTrim, date.trim(), null, names, cust, JSON.stringify(clean), '{}', tot]);
+      id = r.lastInsertRowId;
+    }
+    bumpCounter('breakup', numTrim, date.trim());
+    onSaved(id);
+  };
+
+  return (
+    <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 300 }} keyboardShouldPersistTaps="handled">
+      <Text style={s.section}>Breakup{copyFrom ? ' (copy)' : ''}</Text>
+      <View style={s.panel}>
+        <Field label="Breakup No." value={number} onChangeText={setNumber} />
+        <DateField label="Date" value={date} onChange={setDate} />
+      </View>
+
+      {secs.map((sec, si) => (
+        <View key={si}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <Text style={s.section}>Die {si + 1}</Text>
+            {secs.length > 1 && (
+              <TouchableOpacity onPress={() => delSec(si)}><Text style={[s.link, { color: RED }]}>Ye die hatao</Text></TouchableOpacity>
+            )}
+          </View>
+          <View style={s.panel}>
+            <Field label="Die ka naam *" value={sec.die} onChangeText={(v) => updSec(si, { die: v })} autoCapitalize="characters" />
+            <Text style={s.label}>Kaam ka breakup</Text>
+            {sec.rows.map((r, ri) => (
+              <View key={ri} style={s.itemBox}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <TouchableOpacity onPress={() => setPick({ si, ri })}><Text style={[s.link, { marginTop: 0 }]}>Saved item se chuno</Text></TouchableOpacity>
+                  <TouchableOpacity onPress={() => saveRowToList(si, ri)}><Text style={[s.link, { marginTop: 0 }]}>List mein save karo</Text></TouchableOpacity>
+                </View>
+                <Input multiline style={[{ minHeight: 52 }]} placeholder="Kaam / Charges (jaise VMC MACHINING CHARGES)"
+                  value={r.desc} onChangeText={(v) => updRow(si, ri, 'desc', v)} />
+                <Input style={[{ marginTop: 6 }]} placeholder="Amount ₹" keyboardType="decimal-pad"
+                  value={String(r.amount)} onChangeText={(v) => updRow(si, ri, 'amount', v)} />
+                {sec.rows.length > 1 && (
+                  <TouchableOpacity onPress={() => delRow(si, ri)}><Text style={[s.link, { color: RED, marginTop: 6 }]}>Ye kaam hatao</Text></TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <View style={{ flexDirection: 'row', gap: 22, flexWrap: 'wrap' }}>
+              <TouchableOpacity onPress={() => addRow(si)}><Text style={s.link}>+ Kaam add karo</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setPick({ si, ri: -1 })}><Text style={s.link}>Saved item add karo</Text></TouchableOpacity>
+            </View>
+            <View style={s.grandRow}>
+              <Text style={s.grandLbl}>Die total</Text>
+              <Text style={[s.grand, { fontSize: 18 }]}>₹{inrQ(calcSec(sec))}</Text>
+            </View>
+          </View>
+        </View>
+      ))}
+
+      <TouchableOpacity onPress={() => setSecs((prev) => [...prev, blankSec()])}>
+        <Text style={[s.link, { marginTop: 16 }]}>+ Naya die add karo</Text>
+      </TouchableOpacity>
+
+      <View style={s.totalBox}>
+        <View style={[s.grandRow, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+          <Text style={s.grandLbl}>Grand total</Text>
+          <Text style={s.grand}>₹{inrQ(grand)}</Text>
+        </View>
+      </View>
+      <TouchableOpacity style={s.btn} onPress={save}><Text style={s.btnText}>{doc ? 'Update karo' : 'Save karo'}</Text></TouchableOpacity>
+
+      <SavedItemPicker visible={pick !== null} kind="breakup" onClose={() => setPick(null)} onPick={applySaved} />
     </ScrollView>
   );
 }
@@ -1333,6 +1658,8 @@ function DocView({ docId, setScreen, onDeleted }) {
   const doc = db.getFirstSync('SELECT * FROM documents WHERE id = ?', [docId]);
   if (!doc) return <Text style={s.empty}>Document nahi mila.</Text>;
   const isInv = doc.type === 'invoice';
+  const isDet = doc.type === 'detail';
+  const isBr = doc.type === 'breakup';
   const c = JSON.parse(doc.customer || '{}');
   const items = JSON.parse(doc.items || '[]');
   const S = getSettings();
@@ -1373,7 +1700,7 @@ function DocView({ docId, setScreen, onDeleted }) {
           <Avatar name={c.name} size={46} />
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={s.docName} numberOfLines={2}>{c.name}</Text>
-            <Text style={s.muted}>{isInv ? 'Invoice' : 'Quotation'} {doc.number}</Text>
+            <Text style={s.muted}>{isInv ? 'Invoice' : isDet ? 'Dispatch detail' : isBr ? 'Breakup' : 'Quotation'} {doc.number}</Text>
           </View>
         </View>
         <View style={s.docMeta}>
@@ -1382,8 +1709,8 @@ function DocView({ docId, setScreen, onDeleted }) {
             <Text style={s.metaVal}>{doc.date}</Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={s.metaLbl}>Total</Text>
-            <Text style={s.docTotal}>₹{isInv ? inr(t.total) : inrQ(num(doc.total))}</Text>
+            <Text style={s.metaLbl}>{isDet ? 'Total qty' : isBr ? 'Grand total' : 'Total'}</Text>
+            <Text style={s.docTotal}>{isDet ? inrQ(calcDetail(items)) : '₹' + (isInv ? inr(t.total) : inrQ(num(doc.total)))}</Text>
           </View>
         </View>
       </View>
@@ -1395,6 +1722,7 @@ function DocView({ docId, setScreen, onDeleted }) {
         </TouchableOpacity>
       ) : null}
 
+      {!isDet && !isBr && (
       <View style={[s.statusBox, { backgroundColor: paid ? '#DCFCE7' : '#FEE2E2' }]}>
         <View style={{ flex: 1 }}>
           <Text style={[s.cardTitle, { color: paid ? '#15803D' : '#B91C1C' }]}>{paid ? 'Paid' : 'Payment pending'}</Text>
@@ -1404,7 +1732,36 @@ function DocView({ docId, setScreen, onDeleted }) {
           <Text style={s.smallBtnText}>{paid ? 'Unpaid karo' : 'Paid mark karo'}</Text>
         </TouchableOpacity>
       </View>
+      )}
 
+      {isBr ? (
+        <View>
+          {items.map((sec, si) => (
+            <View key={si}>
+              <Text style={s.section}>{sec.die}</Text>
+              <View style={[s.panel, { paddingVertical: 4 }]}>
+                {(sec.rows || []).map((r, n) => (
+                  <View key={n} style={[s.itemRow, n === 0 && { borderTopWidth: 0 }]}>
+                    <View style={{ flex: 1, paddingRight: 10 }}><Text style={s.itemDesc}>{r.desc}</Text></View>
+                    <Text style={s.itemAmt}>₹{inrQ(num(r.amount))}</Text>
+                  </View>
+                ))}
+                <View style={s.itemRow}>
+                  <Text style={[s.itemDesc, { flex: 1, fontWeight: '800' }]}>Total</Text>
+                  <Text style={[s.itemAmt, { fontWeight: '800' }]}>₹{inrQ(calcSec(sec))}</Text>
+                </View>
+              </View>
+            </View>
+          ))}
+          <View style={s.totalBox}>
+            <View style={[s.grandRow, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+              <Text style={s.grandLbl}>Grand total</Text>
+              <Text style={s.grand}>₹{inrQ(num(doc.total))}</Text>
+            </View>
+          </View>
+        </View>
+      ) : (
+        <View>
       <Text style={s.section}>Items</Text>
       <View style={[s.panel, { paddingVertical: 4 }]}>
         {items.map((i, n) => (
@@ -1415,17 +1772,19 @@ function DocView({ docId, setScreen, onDeleted }) {
                 {isInv ? i.qty + ' × ₹' + inr(num(i.rate)) + (num(i.gst) ? '   GST ' + num(i.gst) + '%' : '') : i.date}
               </Text>
             </View>
-            <Text style={s.itemAmt}>₹{isInv ? inr(num(i.qty) * num(i.rate)) : inrQ(num(i.amount))}</Text>
+            <Text style={s.itemAmt}>{isDet ? inrQ(num(i.qty)) : '₹' + (isInv ? inr(num(i.qty) * num(i.rate)) : inrQ(num(i.amount)))}</Text>
           </View>
         ))}
       </View>
-      <Totals isInv={isInv} t={t} total={isInv ? t.total : num(doc.total)} />
+      {isDet ? <QtyTotal total={calcDetail(items)} /> : <Totals isInv={isInv} t={t} total={isInv ? t.total : num(doc.total)} />}
+        </View>
+      )}
 
       <TouchableOpacity style={s.btn} onPress={share} disabled={busy}>
         <Text style={s.btnText}>{busy ? 'PDF ban raha hai...' : 'PDF banao / Share karo'}</Text>
       </TouchableOpacity>
       <Text style={[s.mutedSm, { textAlign: 'center', marginTop: 6 }]}>{pdfName(doc)}</Text>
-      {!isInv && (
+      {!isInv && !isDet && !isBr && (
         <TouchableOpacity style={[s.btn, { backgroundColor: GREEN }]} onPress={toInvoice}>
           <Text style={s.btnText}>{linked ? 'Dobara Invoice banao' : 'Invoice banao (is quotation se)'}</Text>
         </TouchableOpacity>
@@ -1439,7 +1798,7 @@ function DocView({ docId, setScreen, onDeleted }) {
         </TouchableOpacity>
       </View>
       <TouchableOpacity onPress={del} style={{ alignItems: 'center', marginTop: 18, padding: 8 }}>
-        <Text style={{ color: RED, fontWeight: '700' }}>Delete {isInv ? 'invoice' : 'quotation'}</Text>
+        <Text style={{ color: RED, fontWeight: '700' }}>Delete {isInv ? 'invoice' : isDet ? 'detail' : isBr ? 'breakup' : 'quotation'}</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -1599,6 +1958,7 @@ const s = StyleSheet.create({
   logo: { width: 40, height: 40, borderRadius: 11 },
   title: { color: '#fff', fontSize: 20, fontWeight: '700', letterSpacing: -0.2 },
   subtitle: { color: '#94A3B8', fontSize: 12, marginTop: 1 },
+  iconBtnSm: { width: 36, height: 36, borderRadius: 11 },
   iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
 
   hero: { backgroundColor: DARK, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 38, borderBottomLeftRadius: 28, borderBottomRightRadius: 28 },
